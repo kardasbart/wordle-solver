@@ -9,7 +9,7 @@ from itertools import chain, combinations
 
 from sortedcontainers import SortedList, SortedDict, SortedSet
 
-rank = {
+first_rank = {
 'e': 11.794077134986226,
 's': 9.35757239803803,
 'i': 8.127561647517302,
@@ -270,6 +270,7 @@ def main():
     # print("FILT DONE: ", end - start)
 
     while True:
+        rank = first_rank
         filt = eval(input("Enter filter:"))
         print(filt)
         ret = worddict[filt]
@@ -295,9 +296,8 @@ def main():
             score = 0
             for l in ws:
                 score += rank[l]
-            if len(bestlist) < 20:
-                bestlist.add((w,score))
-        for p in bestlist:
+            bestlist.add((w,score))
+        for p in bestlist[:5]:
             print(f"WORD = {p[0]:>20} {p[1]:.2f}%")
 
 
