@@ -73,6 +73,8 @@ class WordDict:
 
     def filter(self, init_set, key, func):
         bound_func = functools.partial(func, init_set)
+        if key not in self.letter_sets:
+            return init_set
         filtered = self.letter_sets[key]
         return bound_func(filtered)
 
