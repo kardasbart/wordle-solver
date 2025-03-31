@@ -46,6 +46,7 @@ class WordDict:
     def __init__(self):
         self.storage = dict()
         self.letter_sets = dict()
+        self.letter_lookup = dict()
         self.word_sets = dict()
 
 
@@ -64,7 +65,10 @@ class WordDict:
             key = (size, letter, k)
             if key not in self.letter_sets:
                 self.letter_sets[key] = SortedSet()
+            if (size,letter) not in self.letter_lookup:
+                self.letter_lookup[(size,letter)] = SortedSet()
             self.letter_sets[key].add(idx)
+            self.letter_lookup[(size,letter)].add(idx)
 
     def filter(self, init_set, key, func):
         bound_func = functools.partial(func, init_set)
@@ -73,8 +77,17 @@ class WordDict:
 
     def apply_filter(self, size, rules):
         init_set = self.word_sets[size]
-        for key, func in rules:
-            init_set = self.filter(init_set, key, func)
+        for mode, key, func in rules:
+            if mode == "simple":
+                init_set = self.filter(init_set, key, func)
+            elif mode == "include":
+                
+                filtered = self.letter_lookup[(size,key)]
+                logger.info(f"FILTER SIZE = {len(filtered)}")
+                logger.info(f"INIT SIZE = {len(init_set)}")
+                init_set =  init_set.intersection(filtered)
+                logger.info(f"AFTER INIT SIZE = {len(init_set)}")
+
 
         ret = [self.storage[size].get(idx) for idx in init_set]
         return ret
@@ -114,20 +127,24 @@ class HintConfig:
             for p in positions:
                 key = (self.size, letter, p)
                 func = SortedSet.intersection
-                rules.append((key, func))
+                rules.append(("simple", key, func))
+
+        for letter in self.includes.keys():
+            rules.append(("include", letter, None))
 
         pos_left = set(range(self.size)) - set([x for xs in self.corrects.values() for x in xs])
 
         for letter, position in itertools.product(self.excludes, pos_left):
             key = (self.size, letter, position)
             func = SortedSet.difference
-            rules.append((key, func))
+            rules.append(("simple", key, func))
 
         for letter, positions in self.includes.items():
+            pos_left = set(range(self.size)) - set(positions)
             for position in positions:
                 key = (self.size, letter, position)
                 func = SortedSet.difference
-                rules.append((key, func))
+                rules.append(("simple", key, func))
         
         return rules
 
