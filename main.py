@@ -242,27 +242,30 @@ def main():
             result = worddict.apply_filter(current_hint.size, current_hint.rules())
             print_state(screen, current_hint, result, idx_next)
 
-            func = chr(screen.getch())
-            if func == "q":
-                break
-            args = screen.getstr().decode().split()
-            # screen.addstr(f"FUNC {func} ARGS {args}")
-            # screen.getch()
+            try:
+                func = chr(screen.getch())
+                if func == "q":
+                    break
+                args = screen.getstr().decode().split()
+                # screen.addstr(f"FUNC {func} ARGS {args}")
+                # screen.getch()
 
-            if func == "s":
-                size = int(args[0])
-                current_hint = HintConfig(size)
-            elif func == "c":
-                current_hint.correct(args[0], [int(x) - 1 for x in args[1:]])
-            elif func == "i":
-                letter = args[0]
-                values = [int(x) - 1 for x in args[1:]]
-                current_hint.include(letter, values)
-            elif func == "e":
-                for l in "".join(args):
-                    current_hint.exclude(l)
-            elif func == "n":
-                idx_next = int(args[0])
+                if func == "s":
+                    size = int(args[0])
+                    current_hint = HintConfig(size)
+                elif func == "c":
+                    current_hint.correct(args[0], [int(x) - 1 for x in args[1:]])
+                elif func == "i":
+                    letter = args[0]
+                    values = [int(x) - 1 for x in args[1:]]
+                    current_hint.include(letter, values)
+                elif func == "e":
+                    for l in "".join(args):
+                        current_hint.exclude(l)
+                elif func == "n":
+                    idx_next = int(args[0])
+            except:
+                pass
 
     y, x = screen.getyx()
     screen.addstr(y, 0, "Bye!\n")
