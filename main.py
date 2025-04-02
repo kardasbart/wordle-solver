@@ -117,7 +117,7 @@ class HintConfig:
         else:
             old = set()
         if -1 in positions:
-            container.update({letter: set()})
+            del container[letter]
         else:
             container.update({letter: set([*positions, *list(old)])})
 
