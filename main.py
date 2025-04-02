@@ -215,6 +215,8 @@ def split_iterable(value):
     current_letter = None
     for c in value:
         if str(c).isnumeric():
+            if c == "0":
+                c = 10
             result[current_letter].add(int(c) - 1)
         elif str(c) == "#":
             result[current_letter].add(-1)
