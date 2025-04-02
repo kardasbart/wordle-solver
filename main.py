@@ -10,7 +10,10 @@ import functools
 import curses
 import curses.textpad
 import logging
-
+import re
+import signal
+import sys
+import traceback
 from sortedcontainers import SortedList, SortedDict, SortedSet
 
 
@@ -108,21 +111,21 @@ class HintConfig:
         else:
             self.excludes.add(letter)
 
-    def include(self, letter, positions):
-        if letter in self.includes:
-            old = self.includes[letter]
+    def handle_letter_positions(self, container, letter, positions):
+        if letter in container:
+            old = container[letter]
         else:
             old = set()
+        if -1 in positions:
+            container.update({letter: set()})
+        else:
+            container.update({letter: set([*positions, *list(old)])})
 
-        self.includes.update({letter: set([*positions, *list(old)])})
+    def include(self, letter, positions):
+        self.handle_letter_positions(self.includes, letter, positions)
 
     def correct(self, letter, positions):
-        if letter in self.corrects:
-            old = self.corrects[letter]
-        else:
-            old = set()
-
-        self.corrects.update({letter: set([*positions, *list(old)])})
+        self.handle_letter_positions(self.corrects, letter, positions)
 
     def rules(self):
         rules = []
@@ -183,11 +186,11 @@ def print_filter_result(screen, result, idx_next):
     screen.addstr(f"\n\nWords left: {len(bestwords)}\n\n")
     screen.addstr("Letters occurences according to filter:\n")
     for k, v in stats:
-        screen.addstr(f"{k}: {v}%\n")
+        screen.addstr(f"{k}: {v:.4f}%\n")
 
     screen.addstr("\nBest words:\n")
     maxw = len(bestwords)
-    for k, w in enumerate(bestwords[min(idx_next, maxw) : min(idx_next + 5, maxw)]):
+    for k, w in enumerate(bestwords[min(idx_next, maxw) : min(idx_next + 10, maxw)]):
         screen.addstr(f'{k+1+idx_next}: "{w[0]}" score = {w[1]:.2f}\n')
 
 
@@ -205,6 +208,29 @@ def print_state(screen, hints, result, idx_next):
     else:
         screen.addstr("word size = ?\n")
     screen.refresh()
+
+
+def split_iterable(value):
+    result = dict()
+    current_letter = None
+    for c in value:
+        if str(c).isnumeric():
+            result[current_letter].add(int(c) - 1)
+        elif str(c) == "#":
+            result[current_letter].add(-1)
+        else:
+            current_letter = c
+            if c not in result:
+                result[c] = set()
+    return result
+
+
+def split_args(size, value):
+    if size >= 11:
+        value = value.split()
+    else:
+        value = value.replace(" ", "")
+    return split_iterable(value)
 
 
 def main():
@@ -242,28 +268,25 @@ def main():
             result = worddict.apply_filter(current_hint.size, current_hint.rules())
             print_state(screen, current_hint, result, idx_next)
 
+            func = chr(screen.getch())
+            if func == "q":
+                break
+            args = screen.getstr().decode()
             try:
-                func = chr(screen.getch())
-                if func == "q":
-                    break
-                args = screen.getstr().decode().split()
-                # screen.addstr(f"FUNC {func} ARGS {args}")
-                # screen.getch()
-
                 if func == "s":
-                    size = int(args[0])
+                    size = int(args)
                     current_hint = HintConfig(size)
                 elif func == "c":
-                    current_hint.correct(args[0], [int(x) - 1 for x in args[1:]])
+                    for k, v in split_args(current_hint.size, args).items():
+                        current_hint.correct(k, v)
                 elif func == "i":
-                    letter = args[0]
-                    values = [int(x) - 1 for x in args[1:]]
-                    current_hint.include(letter, values)
+                    for k, v in split_args(current_hint.size, args).items():
+                        current_hint.include(k, v)
                 elif func == "e":
-                    for l in "".join(args):
+                    for l in set(args.replace(" ", "")):
                         current_hint.exclude(l)
                 elif func == "n":
-                    idx_next = int(args[0])
+                    idx_next = int(args)
             except:
                 pass
 
@@ -272,5 +295,16 @@ def main():
     screen.refresh()
 
 
+def signal_handler(sig, frame):
+    curses.endwin()
+    sys.exit(0)
+
+
 if __name__ == "__main__":
-    main()
+    signal.signal(signal.SIGINT, signal_handler)
+    try:
+        main()
+    except Exception as e:
+        curses.endwin()
+        print(traceback.format_exc())
+        sys.exit(-1)
