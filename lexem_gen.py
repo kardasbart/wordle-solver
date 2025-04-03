@@ -17,7 +17,7 @@ def main():
             ret = morf.analyse(word)
             for r in ret:
                 lexem = r[2][1].split(":")[0]
-                output_dictionary.add(lexem)
+                output_dictionary.add(lexem.lower())
     
     print(num_lines, " -> ", len(output_dictionary))
 

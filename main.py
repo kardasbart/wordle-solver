@@ -247,7 +247,7 @@ def main():
     with open(sys.argv[1], "r") as file:
         # Read each line in the file
         for idx, line in enumerate(file):
-            screen.addstr(0, 0, f"{idx} / {num_lines} | {idx / num_lines:.3f}%")
+            screen.addstr(0, 0, f"{idx} / {num_lines} | {idx / num_lines*100:.3f}%")
             progress = "#" * ((width * idx) // num_lines)
             screen.addstr(1, 0, f"{progress}")
             screen.refresh()
