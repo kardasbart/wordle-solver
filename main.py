@@ -16,12 +16,12 @@ import traceback
 from sortedcontainers import SortedList, SortedDict, SortedSet
 
 
-# logger = logging.getLogger(__file__)
-# hdlr = logging.FileHandler(__file__ + ".log")
-# formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-# hdlr.setFormatter(formatter)
-# logger.addHandler(hdlr)
-# logger.setLevel(logging.DEBUG)
+logger = logging.getLogger(__file__)
+hdlr = logging.FileHandler(__file__ + ".log")
+formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+hdlr.setFormatter(formatter)
+logger.addHandler(hdlr)
+logger.setLevel(logging.DEBUG)
 
 
 class WordLenException(Exception):
@@ -71,7 +71,7 @@ class WordDict:
     def filter(self, init_set, key, func):
         bound_func = functools.partial(func, init_set)
         if key not in self.letter_sets:
-            return SortedSet()
+            return init_set
         filtered = self.letter_sets[key]
         return bound_func(filtered)
 
@@ -82,6 +82,7 @@ class WordDict:
             init_set = self.words_by_size[config.size]
         
             for mode, key, func in config.rules():
+                logger.info(f"{mode}, {key}, {func}")
                 if mode == "simple":
                     init_set = self.filter(init_set, key, func)
                 elif mode == "include":
@@ -99,6 +100,15 @@ class HintConfig:
         self.excludes = set()
         self.size = size
 
+    def clear_excludes(self):
+        self.excludes = set()
+
+    def clear_includes(self):
+        self.includes = dict()
+
+    def clear_corrects(self):
+        self.corrects = dict()
+
     def exclude(self, letter):
         if letter in self.excludes:
             self.excludes.remove(letter)
@@ -110,8 +120,9 @@ class HintConfig:
             old = container[letter]
         else:
             old = set()
-        if -1 in positions:
-            del container[letter]
+        if -1 in positions or len(positions) == 0:
+            if letter in container:
+                del container[letter]
         else:
             container.update({letter: set([*positions, *list(old)])})
 
@@ -370,26 +381,38 @@ def main():
         if func == "q":
             break
         args = ui.get_args()
-        try:
-            if func == "s":
-                size = int(args)
-                current_hint = HintConfig(size)
-            elif func == "c":
+
+        # try:
+        if func == "s":
+            size = int(args)
+            current_hint = HintConfig(size)
+        elif func == "c":
+            if "#" in args:
+                current_hint.clear_corrects()
+            else:
                 for k, v in split_args(current_hint.size, args).items():
                     current_hint.correct(k, v)
-            elif func == "i":
+        elif func == "i":
+            if "#" in args:
+                logger.info(args)
+                current_hint.clear_includes()
+            else:
                 for k, v in split_args(current_hint.size, args).items():
                     current_hint.include(k, v)
-            elif func == "e":
-                for l in set(args.replace(" ", "")):
+        elif func == "e":
+            args = args.replace(" ", "")
+            if "#" in args:
+                current_hint.clear_excludes()
+            else:
+                for l in set(args):
                     current_hint.exclude(l)
-            elif func == "n":
-                if args != "":
-                    idx_next = int(args)
-                else:
-                    idx_next = 0
-        except:
-            pass
+        elif func == "n":
+            if args != "":
+                idx_next = int(args)
+            else:
+                idx_next = 0
+        # except:
+        #     pass
 
 
 def signal_handler(sig, frame):
