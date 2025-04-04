@@ -410,45 +410,46 @@ def main():
         if func == "q":
             break
         args = ui.get_args()
-
-        if func == "s":
-            size = int(args)
-            tabs[current_tab] = HintConfig(size)
-        elif func == "c":
-            if "#" in args:
-                current_hint.clear_corrects()
-            else:
-                for k, v in split_args(current_hint.size, args).items():
-                    current_hint.correct(k, v)
-        elif func == "i":
-            if "#" in args:
-                logger.info(args)
-                current_hint.clear_includes()
-            else:
-                for k, v in split_args(current_hint.size, args).items():
-                    current_hint.include(k, v)
-        elif func == "e":
-            args = args.replace(" ", "")
-            if "#" in args:
-                current_hint.clear_excludes()
-            else:
-                for l in set(args):
-                    current_hint.exclude(l)
-        elif func == "n":
-            if args != "":
-                idx_next = int(args)
-            else:
-                idx_next = 0
-        elif func == "r":
-            if args in ["0","1","2"]:
-                sorting_strategy = int(args)          
-
-        elif func == "t":
-            if args in tabs:
-                current_tab = args
-            else:
-                tabs.update({args: copy.copy(current_hint)})
-                current_tab = args
+        try:
+            if func == "s":
+                size = int(args)
+                tabs[current_tab] = HintConfig(size)
+            elif func == "c":
+                if "#" in args:
+                    current_hint.clear_corrects()
+                else:
+                    for k, v in split_args(current_hint.size, args).items():
+                        current_hint.correct(k, v)
+            elif func == "i":
+                if "#" in args:
+                    logger.info(args)
+                    current_hint.clear_includes()
+                else:
+                    for k, v in split_args(current_hint.size, args).items():
+                        current_hint.include(k, v)
+            elif func == "e":
+                args = args.replace(" ", "")
+                if "#" in args:
+                    current_hint.clear_excludes()
+                else:
+                    for l in set(args):
+                        current_hint.exclude(l)
+            elif func == "n":
+                if args != "":
+                    idx_next = int(args)
+                else:
+                    idx_next = 0
+            elif func == "r":
+                if args in ["0","1","2"]:
+                    sorting_strategy = int(args)          
+            elif func == "t":
+                if args in tabs:
+                    current_tab = args
+                else:
+                    tabs.update({args: copy.copy(current_hint)})
+                    current_tab = args
+        except:
+            pass
 
 def signal_handler(sig, frame):
     curses.endwin()
