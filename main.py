@@ -8,7 +8,6 @@ import json
 from itertools import chain, combinations
 import functools
 import curses
-import curses.textpad
 import logging
 import re
 import signal
@@ -17,12 +16,12 @@ import traceback
 from sortedcontainers import SortedList, SortedDict, SortedSet
 
 
-logger = logging.getLogger(__file__)
-hdlr = logging.FileHandler(__file__ + ".log")
-formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-hdlr.setFormatter(formatter)
-logger.addHandler(hdlr)
-logger.setLevel(logging.DEBUG)
+# logger = logging.getLogger(__file__)
+# hdlr = logging.FileHandler(__file__ + ".log")
+# formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+# hdlr.setFormatter(formatter)
+# logger.addHandler(hdlr)
+# logger.setLevel(logging.DEBUG)
 
 
 class WordLenException(Exception):
@@ -30,14 +29,11 @@ class WordLenException(Exception):
 
 
 class WordStorage:
-    def __init__(self, word_len):
-        self.word_len = word_len
+    def __init__(self):
         self.data = dict()
         self.cnt = 0
 
     def push(self, word):
-        if len(word) != self.word_len:
-            raise WordLenException()
         idx = self.cnt
         self.cnt += 1
         self.data[idx] = word
@@ -49,20 +45,18 @@ class WordStorage:
 
 class WordDict:
     def __init__(self):
-        self.storage = dict()
+        self.storage = WordStorage()
+        self.words_by_size = dict()
         self.letter_sets = dict()
         self.letter_lookup = dict()
-        self.word_sets = dict()
 
     def push(self, word):
         size = len(word)
-        if size not in self.storage:
-            self.storage[size] = WordStorage(size)
-        idx = self.storage[size].push(word)
+        idx = self.storage.push(word)
 
-        if size not in self.word_sets:
-            self.word_sets[size] = SortedSet()
-        self.word_sets[size].add(idx)
+        if size not in self.words_by_size:
+            self.words_by_size[size] = SortedSet()
+        self.words_by_size[size].add(idx)
 
         for k in range(size):
             letter = word[k]
@@ -77,24 +71,24 @@ class WordDict:
     def filter(self, init_set, key, func):
         bound_func = functools.partial(func, init_set)
         if key not in self.letter_sets:
-            return init_set
+            return SortedSet()
         filtered = self.letter_sets[key]
         return bound_func(filtered)
 
-    def apply_filter(self, size, rules):
-        init_set = self.word_sets[size]
-        for mode, key, func in rules:
-            if mode == "simple":
-                init_set = self.filter(init_set, key, func)
-            elif mode == "include":
+    def apply_filter(self, config):
+        if config.size not in self.words_by_size:
+            init_set = SortedSet(self.storage.data.keys())
+        else:
+            init_set = self.words_by_size[config.size]
+        
+            for mode, key, func in config.rules():
+                if mode == "simple":
+                    init_set = self.filter(init_set, key, func)
+                elif mode == "include":
+                    filtered = self.letter_lookup[(config.size, key)]
+                    init_set = init_set.intersection(filtered)
 
-                filtered = self.letter_lookup[(size, key)]
-                logger.info(f"FILTER SIZE = {len(filtered)}")
-                logger.info(f"INIT SIZE = {len(init_set)}")
-                init_set = init_set.intersection(filtered)
-                logger.info(f"AFTER INIT SIZE = {len(init_set)}")
-
-        ret = [self.storage[size].get(idx) for idx in init_set]
+        ret = [self.storage.get(idx) for idx in init_set]
         return ret
 
 
@@ -169,7 +163,7 @@ def calc_stats(result):
                 letters[l] = 1
     rank = sorted([(k, v / cnt * 100) for k, v in letters.items()], key=lambda x: -x[1])
     rank_dict = {a[0]: a[1] for a in rank}
-    bestlist = SortedList(key=lambda x: -x[1])
+    bestlist = SortedSet(key=lambda x: -x[1])
 
     for w in result:
         ws = sorted(set(w))
@@ -179,36 +173,6 @@ def calc_stats(result):
         bestlist.add((w, score))
 
     return rank, bestlist
-
-
-def print_filter_result(screen, result, idx_next):
-    stats, bestwords = calc_stats(result)
-    screen.addstr(f"\n\nWords left: {len(bestwords)}\n\n")
-    screen.addstr("Letters occurences according to filter:\n")
-    for k, v in stats:
-        screen.addstr(f"{k}: {v:.4f}%\n")
-
-    screen.addstr("\nBest words:\n")
-    maxw = len(bestwords)
-    for k, w in enumerate(bestwords[min(idx_next, maxw) : min(idx_next + 10, maxw)]):
-        screen.addstr(f'{k+1+idx_next}: "{w[0]}" score = {w[1]:.2f}\n')
-
-
-def print_state(screen, hints, result, idx_next):
-    screen.clear()
-    screen.addstr("Wordle Solver v0.0.1! Welcome!\n\n")
-    screen.addstr("Current hints:\n")
-    if hints is not None:
-        screen.addstr(f"word size = {hints.size}\n")
-        screen.addstr(f"correct = {hints.corrects}\n")
-        screen.addstr(f"includes = {hints.includes}\n")
-        screen.addstr(f"excludes = {hints.excludes}\n\n")
-        if result is not None:
-            print_filter_result(screen, result, idx_next)
-    else:
-        screen.addstr("word size = ?\n")
-    screen.refresh()
-
 
 def split_iterable(value):
     result = dict()
@@ -234,73 +198,203 @@ def split_args(size, value):
         value = value.replace(" ", "")
     return split_iterable(value)
 
+def word_places(iterable):
+    input_dict = dict()
+    if isinstance(iterable,set):
+        input_dict = { x : set() for x in iterable }
+    else:
+        input_dict = iterable.copy()
+    if len(input_dict):
+        result = "{ " 
+        for k, v in input_dict.items():
+            result += k
+            if len(v) != 0:
+                result += ": " + str(sorted(list([x+1 for x in v])))
+            result += ", "
+        result= result[:-2] + " }"
+    else:
+        result = "{}"
+    return result
+    
+
+class UserInterface:
+    def __init__(self):
+        self.screen = curses.initscr()
+        curses.curs_set(0)
+        self.scr_height, self.scr_width = self.screen.getmaxyx()
+        self.windows = dict()
+
+    def get_window(self, name):
+        if name not in self.windows:
+            func = getattr(self, "create_"+name)
+            func()
+        return self.windows[name]
+
+    def get_string(self):
+        return self.screen.getstr().decode()
+
+    def create_greeting(self):
+        self.windows["greeting"] = curses.newwin(2, self.scr_width, 0, 0)
+
+    def update_greeting(self):
+        pwin = self.get_window("greeting")
+        pwin.addstr(0,0, "Wordle Solver v0.0.1! Welcome!\n")
+        pwin.refresh()
+
+    def create_progress(self):
+        self.windows["progress"] = curses.newwin(3,self.scr_width, 2,0)
+
+    def update_progress(self, current, total):
+        pwin = self.get_window("progress")
+        _, width = pwin.getmaxyx()
+        pwin.addstr(0, 0, f"{current} / {total} | {current / total*100:.3f}%")
+        progress = "#" * ((width * current) // total)
+        pwin.addstr(1, 0, f"{progress}")
+        pwin.refresh()
+    
+    def create_status(self):
+        self.windows["status"] = curses.newwin(10,self.scr_width, 2,0)
+
+    def update_status(self, hint):
+        pwin = self.get_window("status")
+        pwin.clear()
+        if hint is not None:
+            pwin.addstr(0,0,"Current hints:")
+            pwin.addstr(1,0,f"word size = {hint.size}")
+            pwin.addstr(2,0,f"correct =  {word_places(hint.corrects)}")
+            pwin.addstr(3,0,f"includes = {word_places(hint.includes)}")
+            pwin.addstr(4,0,f"excludes = {word_places(hint.excludes)}")
+        pwin.refresh()
+
+    def create_letters(self):
+        self.windows["letters"] = curses.newwin(40,15, 9,0)
+
+    def update_letters(self, stats):
+        pwin = self.get_window("letters")
+        pwin.clear()
+        if stats is not None:
+            pwin.addstr("Letters %:\n")
+            for k, v in stats:
+                pwin.addstr(f"{k}: {v:.4f}%\n")
+        pwin.refresh()
+
+    def create_words(self):
+        self.windows["words"] = curses.newwin(40,self.scr_width, 9, 20)
+
+    def update_words(self, bestwords, idx_next):
+        pwin = self.get_window("words")
+        pwin.clear()
+        if bestwords is not None:
+            height, _ = pwin.getmaxyx()
+            height -= 5
+            pwin.addstr(f"Best of {len(bestwords)} words:\n")
+            maxw = len(bestwords)
+            for k, w in enumerate(bestwords[min(idx_next, maxw) : min(idx_next + height-1, maxw)]):
+                pwin.addstr(f'{k+1+idx_next}: "{w[0]}" score = {w[1]:.2f}\n')
+        pwin.refresh()
+
+    def create_input(self):
+        self.windows["input"] = curses.newwin(2,self.scr_width, 50, 0)
+
+    def update_input(self, func):
+        pwin = self.get_window("input")
+        pwin.clear()
+        options = ["[c]orrect","[i]nclude","[e]xclude","[s]ize","[n]ext","[q]uit"]
+        for opt in options:
+            if f"[{func}]" in opt:
+                pwin.addstr(opt, curses.A_STANDOUT)
+            else:
+                pwin.addstr(opt)
+            if opt != options[-1]:
+                pwin.addstr(" | ")
+        pwin.addstr("\n")
+        pwin.refresh()
+
+    def clear(self):
+        self.screen.clear()
+
+    def update_main(self, hint, stats, bestwords, idx_next):
+        self.update_greeting()
+        self.update_status(hint)
+        self.update_letters(stats)
+        self.update_words(bestwords, idx_next)
+
+    def update_loading(self, current, total):
+        self.update_greeting()
+        self.update_progress(current, total)
+
+    def get_func(self):
+        pwin = self.get_window("input")
+        curses.noecho()
+        while True:
+            func = chr(pwin.getch()).lower()
+            if func in "ciesqn":
+                break
+        curses.echo()
+        return func
+
+    def get_args(self):
+        pwin = self.get_window("input")
+        args = pwin.getstr().decode().lower()
+        pwin.clear()
+        pwin.refresh()
+        return args
 
 def main():
-    start = time.time()
-
-    screen = curses.initscr()
-    curses.curs_set(0)
-    height, width = screen.getmaxyx()
+    ui = UserInterface()
 
     num_lines = sum(1 for _ in open(sys.argv[1]))
     worddict = WordDict()
     with open(sys.argv[1], "r") as file:
         # Read each line in the file
         for idx, line in enumerate(file):
-            screen.addstr(0, 0, f"{idx} / {num_lines} | {idx / num_lines*100:.3f}%")
-            progress = "#" * ((width * idx) // num_lines)
-            screen.addstr(1, 0, f"{progress}")
-            screen.refresh()
-            # Print each line
+            ui.update_loading(idx+1, num_lines)
             word = line.strip()
             worddict.push(word)
 
-    current_hint = None
+    # freq = [ a.split() for a in open(sys.argv[2]) ]
+    # freq = {a[0] : a[1] for a in freq}
+
+    current_hint = HintConfig(0)
+    result = None
+    stats = None
     idx_next = 0
     while True:
-        if current_hint is None:
-            print_state(screen, current_hint, None, idx_next)
-            screen.addstr("Set word length:")
-            event = screen.getstr().decode()
-            size = int(event)
-            # size = 5
-            current_hint = HintConfig(size)
-            idx_next = 0
-        else:
-            result = worddict.apply_filter(current_hint.size, current_hint.rules())
-            print_state(screen, current_hint, result, idx_next)
+        result = worddict.apply_filter(current_hint)
+        stats, bestwords = calc_stats(result)
+        ui.update_main(current_hint, stats, bestwords, idx_next)
 
-            func = chr(screen.getch())
-            if func == "q":
-                break
-            args = screen.getstr().decode()
-            try:
-                if func == "s":
-                    size = int(args)
-                    current_hint = HintConfig(size)
-                elif func == "c":
-                    for k, v in split_args(current_hint.size, args).items():
-                        current_hint.correct(k, v)
-                elif func == "i":
-                    for k, v in split_args(current_hint.size, args).items():
-                        current_hint.include(k, v)
-                elif func == "e":
-                    for l in set(args.replace(" ", "")):
-                        current_hint.exclude(l)
-                elif func == "n":
+        ui.update_input(None)
+        func = ui.get_func()
+        ui.update_input(func)
+        if func == "q":
+            break
+        args = ui.get_args()
+        try:
+            if func == "s":
+                size = int(args)
+                current_hint = HintConfig(size)
+            elif func == "c":
+                for k, v in split_args(current_hint.size, args).items():
+                    current_hint.correct(k, v)
+            elif func == "i":
+                for k, v in split_args(current_hint.size, args).items():
+                    current_hint.include(k, v)
+            elif func == "e":
+                for l in set(args.replace(" ", "")):
+                    current_hint.exclude(l)
+            elif func == "n":
+                if args != "":
                     idx_next = int(args)
-            except:
-                pass
-
-    y, x = screen.getyx()
-    screen.addstr(y, 0, "Bye!\n")
-    screen.refresh()
+                else:
+                    idx_next = 0
+        except:
+            pass
 
 
 def signal_handler(sig, frame):
     curses.endwin()
     sys.exit(0)
-
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
@@ -310,3 +404,4 @@ if __name__ == "__main__":
         curses.endwin()
         print(traceback.format_exc())
         sys.exit(-1)
+    curses.endwin()
