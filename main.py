@@ -234,6 +234,7 @@ class UserInterface:
         curses.curs_set(0)
         self.scr_height, self.scr_width = self.screen.getmaxyx()
         self.windows = dict()
+        self.funcs = "ciestnq"
 
     def get_window(self, name):
         if name not in self.windows:
@@ -264,7 +265,7 @@ class UserInterface:
         pwin.refresh()
     
     def create_status(self):
-        self.windows["status"] = curses.newwin(10,self.scr_width, 2,0)
+        self.windows["status"] = curses.newwin(5,self.scr_width, 4,0)
 
     def update_status(self, hint):
         pwin = self.get_window("status")
@@ -278,7 +279,7 @@ class UserInterface:
         pwin.refresh()
 
     def create_letters(self):
-        self.windows["letters"] = curses.newwin(40,15, 9,0)
+        self.windows["letters"] = curses.newwin(40,15, 10,0)
 
     def update_letters(self, stats):
         pwin = self.get_window("letters")
@@ -290,7 +291,7 @@ class UserInterface:
         pwin.refresh()
 
     def create_words(self):
-        self.windows["words"] = curses.newwin(40,self.scr_width, 9, 20)
+        self.windows["words"] = curses.newwin(40,self.scr_width, 10, 20)
 
     def update_words(self, bestwords, idx_next):
         pwin = self.get_window("words")
@@ -304,28 +305,49 @@ class UserInterface:
                 pwin.addstr(f'{k+1+idx_next}: "{w[0]}" score = {w[1]:.2f}\n')
         pwin.refresh()
 
+    def add_list(self, win, current, all):
+        if not isinstance(all, dict):
+            all_dict = dict(zip(all,all))
+        else:
+            all_dict = all
+
+        for idx, opt in enumerate(all_dict.items()):
+            key, value = opt
+            if current == key:
+                win.addstr(value, curses.A_STANDOUT)
+            else:
+                win.addstr(value)
+            if idx != len(all_dict)-1:
+                win.addstr(" | ")
+        win.addstr("\n")
+
     def create_input(self):
         self.windows["input"] = curses.newwin(2,self.scr_width, 50, 0)
 
     def update_input(self, func):
         pwin = self.get_window("input")
+        options = ["[c]orrect","[i]nclude","[e]xclude","[s]ize","[t]ab","[n]ext","[q]uit"]
         pwin.clear()
-        options = ["[c]orrect","[i]nclude","[e]xclude","[s]ize","[n]ext","[q]uit"]
-        for opt in options:
-            if f"[{func}]" in opt:
-                pwin.addstr(opt, curses.A_STANDOUT)
-            else:
-                pwin.addstr(opt)
-            if opt != options[-1]:
-                pwin.addstr(" | ")
-        pwin.addstr("\n")
+        self.add_list(pwin, func, dict(zip(self.funcs,options)))
+        pwin.refresh()
+
+    def create_tabs(self):
+        self.windows["tabs"] = curses.newwin(2,self.scr_width, 2, 0)
+
+    def update_tabs(self, current, all_tabs):
+        pwin = self.get_window("tabs")
+        pwin.clear()
+        pwin.addstr("TABS: ")
+        self.add_list(pwin, current, all_tabs)
         pwin.refresh()
 
     def clear(self):
         self.screen.clear()
+        self.screen.refresh()
 
-    def update_main(self, hint, stats, bestwords, idx_next):
+    def update_main(self,currnet_tab, all_tabs, hint, stats, bestwords, idx_next):
         self.update_greeting()
+        self.update_tabs(currnet_tab, all_tabs)
         self.update_status(hint)
         self.update_letters(stats)
         self.update_words(bestwords, idx_next)
@@ -339,7 +361,7 @@ class UserInterface:
         curses.noecho()
         while True:
             func = chr(pwin.getch()).lower()
-            if func in "ciesqn":
+            if func in self.funcs:
                 break
         curses.echo()
         return func
@@ -362,18 +384,20 @@ def main():
             ui.update_loading(idx+1, num_lines)
             word = line.strip()
             worddict.push(word)
-
+    ui.clear()
     # freq = [ a.split() for a in open(sys.argv[2]) ]
     # freq = {a[0] : a[1] for a in freq}
 
-    current_hint = HintConfig(0)
+    tabs = {"0": HintConfig(0)}
+    current_tab = "0"
     result = None
     stats = None
     idx_next = 0
     while True:
+        current_hint = tabs[current_tab]
         result = worddict.apply_filter(current_hint)
         stats, bestwords = calc_stats(result)
-        ui.update_main(current_hint, stats, bestwords, idx_next)
+        ui.update_main(current_tab, tabs.keys(), current_hint, stats, bestwords, idx_next)
 
         ui.update_input(None)
         func = ui.get_func()
@@ -382,10 +406,9 @@ def main():
             break
         args = ui.get_args()
 
-        # try:
         if func == "s":
             size = int(args)
-            current_hint = HintConfig(size)
+            tabs[current_tab] = HintConfig(size)
         elif func == "c":
             if "#" in args:
                 current_hint.clear_corrects()
@@ -411,9 +434,12 @@ def main():
                 idx_next = int(args)
             else:
                 idx_next = 0
-        # except:
-        #     pass
-
+        elif func == "t":
+            if args in tabs:
+                current_tab = args
+            else:
+                tabs.update({args: copy.copy(current_hint)})
+                current_tab = args
 
 def signal_handler(sig, frame):
     curses.endwin()
