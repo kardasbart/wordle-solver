@@ -162,7 +162,7 @@ class HintConfig:
         return rules
 
 
-def calc_stats(result):
+def calc_stats(result, freq, strategy):
     letters = dict()
     cnt = 0
     for word in result:
@@ -174,14 +174,17 @@ def calc_stats(result):
                 letters[l] = 1
     rank = sorted([(k, v / cnt * 100) for k, v in letters.items()], key=lambda x: -x[1])
     rank_dict = {a[0]: a[1] for a in rank}
-    bestlist = SortedSet(key=lambda x: -x[1])
+    bestlist = SortedSet(key=lambda x: -x[strategy] if strategy > 0 else x[strategy])
 
     for w in result:
         ws = sorted(set(w))
         score = 0
         for l in ws:
             score += rank_dict[l]
-        bestlist.add((w, score))
+        if w in freq:
+            bestlist.add((w, score, freq[w]))
+        else:
+            bestlist.add((w, score, 0))
 
     return rank, bestlist
 
@@ -234,7 +237,7 @@ class UserInterface:
         curses.curs_set(0)
         self.scr_height, self.scr_width = self.screen.getmaxyx()
         self.windows = dict()
-        self.funcs = "ciestnq"
+        self.funcs = "ciestnrq"
 
     def get_window(self, name):
         if name not in self.windows:
@@ -299,10 +302,10 @@ class UserInterface:
         if bestwords is not None:
             height, _ = pwin.getmaxyx()
             height -= 5
-            pwin.addstr(f"Best of {len(bestwords)} words:\n")
+            pwin.addstr(f"Best of {len(bestwords)} words: {'score':>10} {'freq':>9}\n")
             maxw = len(bestwords)
             for k, w in enumerate(bestwords[min(idx_next, maxw) : min(idx_next + height-1, maxw)]):
-                pwin.addstr(f'{k+1+idx_next}: "{w[0]}" score = {w[1]:.2f}\n')
+                pwin.addstr(f'{k+1+idx_next:2}: {w[0]:20} {w[1]: 6.2f} {w[2]: .2E}\n')
         pwin.refresh()
 
     def add_list(self, win, current, all):
@@ -326,7 +329,7 @@ class UserInterface:
 
     def update_input(self, func):
         pwin = self.get_window("input")
-        options = ["[c]orrect","[i]nclude","[e]xclude","[s]ize","[t]ab","[n]ext","[q]uit"]
+        options = ["[c]orrect","[i]nclude","[e]xclude","[s]ize","[t]ab","[n]ext","so[r]t","[q]uit"]
         pwin.clear()
         self.add_list(pwin, func, dict(zip(self.funcs,options)))
         pwin.refresh()
@@ -385,18 +388,20 @@ def main():
             word = line.strip()
             worddict.push(word)
     ui.clear()
-    # freq = [ a.split() for a in open(sys.argv[2]) ]
-    # freq = {a[0] : a[1] for a in freq}
+
+    freq = [ a.split() for a in open(sys.argv[2]) ]
+    freq = {a[0] : float(a[1]) for a in freq}
 
     tabs = {"0": HintConfig(0)}
     current_tab = "0"
     result = None
     stats = None
     idx_next = 0
+    sorting_strategy = 2
     while True:
         current_hint = tabs[current_tab]
         result = worddict.apply_filter(current_hint)
-        stats, bestwords = calc_stats(result)
+        stats, bestwords = calc_stats(result, freq, sorting_strategy)
         ui.update_main(current_tab, tabs.keys(), current_hint, stats, bestwords, idx_next)
 
         ui.update_input(None)
@@ -434,6 +439,10 @@ def main():
                 idx_next = int(args)
             else:
                 idx_next = 0
+        elif func == "r":
+            if args in ["0","1","2"]:
+                sorting_strategy = int(args)          
+
         elif func == "t":
             if args in tabs:
                 current_tab = args
