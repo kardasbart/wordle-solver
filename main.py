@@ -232,199 +232,300 @@ def word_places(iterable):
     
 
 class UserInterface:
+    MIN_TERMINAL_HEIGHT = 15  # Minimum overall terminal height
+    MIN_TERMINAL_WIDTH = 30   # Minimum overall terminal width
+    
+    # Fixed window heights
+    GREETING_H = 2
+    TABS_H = 2
+    STATUS_H = 5
+    INPUT_H = 2
+
+    # Pad widths (letters pad is fixed, words pad relative to screen)
+    LETTERS_PAD_FIXED_WIDTH = 15
+    WORDS_PAD_RIGHT_MARGIN = 20 # from left edge of screen
+
     def __init__(self):
         self.screen = curses.initscr()
-        self.screen.keypad(True) # Enable keypad mode for arrow keys etc.
+        self.screen.keypad(True)
         curses.curs_set(0)
-        self.scr_height, self.scr_width = self.screen.getmaxyx()
+        
+        self.scr_height, self.scr_width = 0, 0 # Initialized by handle_resize
         self.windows = dict()
         self.funcs = "ciestnrq"
 
-        self.greeting_window_height = 2
-        self.tabs_window_height = 2
-        self.status_window_height = 5
-        self.input_window_height = 2 # Assuming 2 lines for the input window
-
-        self.list_display_area_start_y = (
-            self.greeting_window_height
-            + self.tabs_window_height
-            + self.status_window_height
-        )
-        self.list_display_height = (
-            self.scr_height
-            - self.list_display_area_start_y
-            - self.input_window_height
-        )
-
-        self.terminal_too_small = self.list_display_height < 3
+        # Layout attributes - will be calculated in handle_resize
+        self.list_display_area_start_y = 0
+        self.list_display_height = 0
+        self.list_area_is_too_small = True # Assume too small until handle_resize confirms
 
         # UI state for list focus and scrolling
-        self.active_list = "words"  # Default active list
+        self.active_list = "words"
         self.letters_scroll_offset = 0
         self.words_scroll_offset = 0
 
-        # Initial pad dimensions and viewport coordinates
-        self.initial_pad_height = 100 # Start with 100 lines, can grow
-        self.letters_pad_width = 15
-        self.words_pad_width = max(1, self.scr_width - 20) # Ensure at least 1
+        # Pads - initialized to None, created in handle_resize if space permits
+        self.letters_pad = None
+        self.words_pad = None
+        self.initial_pad_height = 100 # Default internal height for pads when created
 
-        if not self.terminal_too_small:
-            self.letters_pad = curses.newpad(self.initial_pad_height, self.letters_pad_width)
-            self.words_pad = curses.newpad(self.initial_pad_height, self.words_pad_width)
-        else:
-            # Create dummy pads if terminal is too small to prevent errors,
-            # though they won't be properly displayed.
-            self.letters_pad = curses.newpad(1,1)
-            self.words_pad = curses.newpad(1,1)
+        self.words_pad_width = 0 # Calculated in handle_resize
+        self.letters_pad_viewport_coords = (0,0,0,0) # Placeholder
+        self.words_pad_viewport_coords = (0,0,0,0)   # Placeholder
+        
+        # self.terminal_too_small is effectively replaced by checks in handle_resize 
+        # and list_area_is_too_small for more nuanced handling.
 
+    def check_terminal_size_and_display_message(self, custom_message=None):
+        """
+        Checks if the terminal is smaller than MIN_TERMINAL_HEIGHT/WIDTH or if a custom message is provided.
+        If too small or custom message, clears screen and displays the message.
+        Returns False if too small or custom message shown, True otherwise.
+        """
+        too_small_overall = (self.scr_height < UserInterface.MIN_TERMINAL_HEIGHT or 
+                             self.scr_width < UserInterface.MIN_TERMINAL_WIDTH)
 
-        # Viewport coordinates: (pminrow, pmincol, sminrow, smincol, smaxrow, smaxcol)
-        # sminrow, smincol, smaxrow, smaxcol define the screen rectangle for display
+        message_to_display = None
+        if custom_message:
+            message_to_display = custom_message
+        elif too_small_overall:
+            message_to_display = "Terminal too small. Please resize."
+
+        if message_to_display:
+            self.screen.clear()
+            try:
+                # Center the message if possible
+                msg_y = self.scr_height // 2
+                msg_x = (self.scr_width - len(message_to_display)) // 2
+                if msg_y >= 0 and msg_x >=0: # Ensure coordinates are not negative
+                     self.screen.addstr(msg_y, msg_x, message_to_display)
+                else: # Fallback for extremely small terminals
+                    self.screen.addstr(0, 0, "Too small")
+            except curses.error: # If even that fails
+                pass 
+            self.screen.refresh()
+            return False
+        return True
+
+    def handle_resize(self):
+        """
+        Handles terminal resize events. Recalculates layout, recreates windows,
+        updates pad viewports, and checks if the UI can be meaningfully drawn.
+        Returns True if the main UI can be drawn, False otherwise.
+        """
+        h, w = self.screen.getmaxyx()
+        try:
+            if h != self.scr_height or w != self.scr_width: # Only if dimensions actually changed
+                curses.resizeterm(h, w)
+        except Exception as e:
+            logger.error(f"Error in curses.resizeterm: {e}")
+            # Continue, hoping for the best or that subsequent operations handle it
+        
+        self.scr_height, self.scr_width = h, w
+        self.screen.clear() # Clear before any drawing or message
+        # self.screen.refresh() # Refresh after clear, before message check
+
+        if not self.check_terminal_size_and_display_message():
+            self.list_area_is_too_small = True # Ensure this is set
+            return False # Overall terminal too small
+
+        # Recalculate dynamic layout properties
+        self.list_display_area_start_y = ( UserInterface.GREETING_H 
+                                         + UserInterface.TABS_H 
+                                         + UserInterface.STATUS_H )
+        input_window_y_start = self.scr_height - UserInterface.INPUT_H
+        self.list_display_height = input_window_y_start - self.list_display_area_start_y
+        
+        self.list_area_is_too_small = self.list_display_height < 3
+
+        if self.list_area_is_too_small:
+            # Use the generic message for now, or a specific one for list area
+            self.check_terminal_size_and_display_message("List display area too small.")
+            return False # Main UI cannot be meaningfully drawn
+
+        # If we reach here, terminal and list area are usable
+        
+        # Recreate/move fixed windows
+        self.create_greeting() # at 0,0
+        self.create_tabs()     # at self.GREETING_H, 0
+        self.create_status()   # at self.GREETING_H + self.TABS_H, 0
+        self.create_input()    # at input_window_y_start, 0
+
+        # Create pads if they don't exist (e.g., first run or recovery from too_small)
+        if self.letters_pad is None:
+            self.letters_pad = curses.newpad(self.initial_pad_height, UserInterface.LETTERS_PAD_FIXED_WIDTH)
+        
+        new_words_pad_width = max(1, self.scr_width - UserInterface.WORDS_PAD_RIGHT_MARGIN)
+        if self.words_pad is None:
+            self.words_pad = curses.newpad(self.initial_pad_height, new_words_pad_width)
+            self.words_pad_width = new_words_pad_width
+        elif self.words_pad_width != new_words_pad_width:
+            try:
+                self.words_pad.resize(self.words_pad.getmaxyx()[0], new_words_pad_width)
+                self.words_pad_width = new_words_pad_width
+            except curses.error as e:
+                logger.error(f"Error resizing words_pad, recreating: {e}")
+                self.words_pad = curses.newpad(self.initial_pad_height, new_words_pad_width)
+                self.words_pad_width = new_words_pad_width
+        
+        # Update pad viewport coordinates
         self.letters_pad_viewport_coords = (
             self.list_display_area_start_y, 0, # sminrow, smincol
-            self.list_display_area_start_y + self.list_display_height -1 , 14 # smaxrow, smaxcol
+            self.list_display_area_start_y + self.list_display_height - 1, 
+            UserInterface.LETTERS_PAD_FIXED_WIDTH - 1 # smaxcol
         )
         self.words_pad_viewport_coords = (
-            self.list_display_area_start_y, 20, # sminrow, smincol
-            self.list_display_area_start_y + self.list_display_height -1, self.scr_width -1 # smaxrow, smaxcol
+            self.list_display_area_start_y, UserInterface.WORDS_PAD_RIGHT_MARGIN, # sminrow, smincol
+            self.list_display_area_start_y + self.list_display_height - 1, 
+            UserInterface.WORDS_PAD_RIGHT_MARGIN + self.words_pad_width -1 # smaxcol
         )
+        
+        # Scroll offsets are clamped in update_letters/update_words methods.
+        # self.screen.refresh() # Refresh after all updates if needed, or handled by main loop redraw
+        return True
 
 
     def get_window(self, name):
-        # Pads are handled separately, not as part of self.windows dictionary like regular windows.
-        if name in ["letters", "words"]:
-            # This case should ideally not be hit if update_letters/words are called directly.
-            # If it is, it means some other part of code is trying to get them as standard windows.
-            logger.warning(f"Attempted to get {name} pad via get_window. This is not standard.")
-            if name == "letters":
-                return self.letters_pad
-            elif name == "words":
-                return self.words_pad
+        # Pads are handled separately. get_window is for fixed windows.
         if name not in self.windows:
-            func = getattr(self, "create_"+name)
+            # This implies a window needs to be created that wasn't handled by handle_resize.
+            # For this refactor, all fixed windows are created in handle_resize.
+            # So, if this is called for a fixed window, it means it might have been cleared.
+            # However, create_ methods are designed to be callable multiple times.
+            create_method = getattr(self, "create_"+name, None)
+            if create_method is None:
+                logger.error(f"No create method for window: {name}")
+                # Potentially raise an error or return a dummy window
+                return None # Or some dummy screen object
+            logger.info(f"Recreating window {name} via get_window")
+            func = create_method
             func()
-        return self.windows[name]
+        return self.windows.get(name) # Use .get for safety
 
     def get_string(self):
-        return self.screen.getstr().decode()
+        # Ensure input window exists before trying to get string from it
+        input_win = self.get_window("input")
+        if input_win:
+            return input_win.getstr().decode().lower()
+        return "" # Fallback or raise error
 
     def create_greeting(self):
-        self.windows["greeting"] = curses.newwin(self.greeting_window_height, self.scr_width, 0, 0)
+        # Uses GREETING_H, self.scr_width, at 0,0
+        self.windows["greeting"] = curses.newwin(UserInterface.GREETING_H, self.scr_width, 0, 0)
 
     def update_greeting(self):
         pwin = self.get_window("greeting")
+        if not pwin: return # Window might not exist if terminal is too small
         pwin.addstr(0,0, "Wordle Solver v0.0.1! Welcome!\n")
-        pwin.refresh()
+        pwin.noutrefresh()
 
     def create_progress(self):
-        # Progress window y position is after greeting
-        self.windows["progress"] = curses.newwin(3,self.scr_width, self.greeting_window_height,0)
+        # Progress window y position is after greeting (GREETING_H)
+        # Height is fixed at 3 for this example
+        self.windows["progress"] = curses.newwin(3, self.scr_width, UserInterface.GREETING_H, 0)
 
     def update_progress(self, current, total):
         pwin = self.get_window("progress")
+        if not pwin: return
         _, width = pwin.getmaxyx()
         pwin.addstr(0, 0, f"{current} / {total} | {current / total*100:.3f}%")
-        progress = "#" * ((width * current) // total)
-        pwin.addstr(1, 0, f"{progress}")
-        pwin.refresh()
+        progress_bar_width = max(0, width - 2) # Ensure positive width for progress bar
+        progress = "#" * ((progress_bar_width * current) // total if total > 0 else 0)
+        pwin.addstr(1, 0, f"[{progress:<{progress_bar_width}}]") # Display progress bar within brackets
+        pwin.noutrefresh()
     
     def create_status(self):
-        status_y_start = self.greeting_window_height + self.tabs_window_height
-        self.windows["status"] = curses.newwin(self.status_window_height,self.scr_width, status_y_start,0)
+        status_y_start = UserInterface.GREETING_H + UserInterface.TABS_H
+        self.windows["status"] = curses.newwin(UserInterface.STATUS_H, self.scr_width, status_y_start,0)
 
     def update_status(self, hint):
         pwin = self.get_window("status")
+        if not pwin: return
         pwin.clear()
         if hint is not None:
             pwin.addstr(0,0,"Current hints:")
-            pwin.addstr(1,0,f"word size = {hint.size}") # Line 0
-            pwin.addstr(2,0,f"correct =  {word_places(hint.corrects)}") # Line 1
-            pwin.addstr(3,0,f"includes = {word_places(hint.includes)}") # Line 2
-            pwin.addstr(4,0,f"excludes = {word_places(hint.excludes)}") # Line 3
-        pwin.refresh()
+            pwin.addstr(1,0,f"word size = {hint.size}") 
+            pwin.addstr(2,0,f"correct =  {word_places(hint.corrects)}") 
+            pwin.addstr(3,0,f"includes = {word_places(hint.includes)}") 
+            pwin.addstr(4,0,f"excludes = {word_places(hint.excludes)}") 
+        pwin.noutrefresh()
 
     def create_letters(self):
-        # This method might be used to draw a border or can be removed.
-        # For now, pads are created in __init__.
-        # If borders are needed, they would be drawn on self.screen.
+        # Pads are created in handle_resize if not already existing.
+        # This method is now passive as per refactoring plan.
         pass
 
     def update_letters(self, stats):
-        if self.terminal_too_small: return
+        if self.list_area_is_too_small or self.letters_pad is None: return
 
         self.letters_pad.clear()
         lines_written = 0
         
         prefix = "> " if self.active_list == "letters" else "  "
         title = f"{prefix}Letters %:"
-        self.letters_pad.addstr(lines_written, 0, title)
-        lines_written += 1
+        try:
+            self.letters_pad.addstr(lines_written, 0, title)
+            lines_written += 1
 
-        if stats is not None:
-            for k, v in stats:
-                if lines_written >= self.letters_pad.getmaxyx()[0]:
-                    self.letters_pad.resize(lines_written + 20, self.letters_pad_width) # Grow pad
-                try:
+            if stats is not None:
+                for k, v in stats:
+                    if lines_written >= self.letters_pad.getmaxyx()[0]: # Pad internal height
+                        self.letters_pad.resize(lines_written + 20, UserInterface.LETTERS_PAD_FIXED_WIDTH)
                     self.letters_pad.addstr(lines_written, 0, f"{k}: {v:.4f}%")
                     lines_written += 1
-                except curses.error: # Avoid crashing if content still doesn't fit after resize (e.g. single line too wide)
-                    logger.error("Error writing to letters_pad, possibly too wide for pad width")
-                    break
+            
+            # Clamping scroll offset
+            pad_content_height = lines_written
+            max_scroll = max(0, pad_content_height - self.list_display_height)
+            self.letters_scroll_offset = max(0, min(self.letters_scroll_offset, max_scroll))
 
+            self.letters_pad.refresh(self.letters_scroll_offset, 0, 
+                                     self.letters_pad_viewport_coords[0], self.letters_pad_viewport_coords[1],
+                                     self.letters_pad_viewport_coords[2], self.letters_pad_viewport_coords[3])
+        except curses.error as e:
+            logger.error(f"Error updating letters_pad: {e}")
 
-        pad_height, _ = self.letters_pad.getmaxyx()
-        max_scroll = max(0, lines_written - self.list_display_height)
-        self.letters_scroll_offset = max(0, min(self.letters_scroll_offset, max_scroll))
-
-        # Refresh: pad_scroll_y, pad_scroll_x, sminrow, smincol, smaxrow, smaxcol
-        self.letters_pad.refresh(self.letters_scroll_offset, 0, 
-                                 self.letters_pad_viewport_coords[0], self.letters_pad_viewport_coords[1],
-                                 self.letters_pad_viewport_coords[2], self.letters_pad_viewport_coords[3])
 
     def create_words(self):
-        # This method might be used to draw a border or can be removed.
-        # For now, pads are created in __init__.
+        # Pads are created in handle_resize if not already existing.
+        # This method is now passive as per refactoring plan.
         pass
 
-    def update_words(self, bestwords): # idx_next removed
-        if self.terminal_too_small: return
+    def update_words(self, bestwords):
+        if self.list_area_is_too_small or self.words_pad is None: return
 
         self.words_pad.clear()
         lines_written = 0
-
         prefix = "> " if self.active_list == "words" else "  "
         
-        if bestwords is not None:
-            title = f"{prefix}Best of {len(bestwords)} words: {'score':>10} {'freq':>9}"
-            self.words_pad.addstr(lines_written, 0, title)
-            lines_written +=1
-            
-            # Iterate through words to display based on scroll offset
-            # The content for the pad is all words, scrolling handles the view.
-            for k, w_tuple in enumerate(bestwords): # bestwords itself is already sorted and contains all words
-                if lines_written >= self.words_pad.getmaxyx()[0]:
-                    self.words_pad.resize(lines_written + 50, self.words_pad_width) # Grow pad
-                try:
-                    # Display index is k + 1, actual word data is w_tuple
+        try:
+            if bestwords is not None:
+                title = f"{prefix}Best of {len(bestwords)} words: {'score':>10} {'freq':>9}"
+                self.words_pad.addstr(lines_written, 0, title)
+                lines_written +=1
+                
+                for k, w_tuple in enumerate(bestwords):
+                    if lines_written >= self.words_pad.getmaxyx()[0]: # Pad internal height
+                        self.words_pad.resize(lines_written + 50, self.words_pad_width)
                     self.words_pad.addstr(lines_written, 0, f'{k+1:2}: {w_tuple[0]:20} {w_tuple[1]: 6.2f} {w_tuple[2]: .2E}')
                     lines_written += 1
-                except curses.error:
-                    logger.error("Error writing to words_pad, possibly too wide for pad width")
-                    break
-        else:
-            self.words_pad.addstr(lines_written, 0, f"{prefix}No words to display.")
-            lines_written += 1
+            else:
+                self.words_pad.addstr(lines_written, 0, f"{prefix}No words to display.")
+                lines_written += 1
 
-        pad_height, _ = self.words_pad.getmaxyx()
-        # self.list_display_height is the height of the viewport
-        max_scroll = max(0, lines_written - self.list_display_height) 
-        self.words_scroll_offset = max(0, min(self.words_scroll_offset, max_scroll))
-        
-        self.words_pad.refresh(self.words_scroll_offset, 0,
-                               self.words_pad_viewport_coords[0], self.words_pad_viewport_coords[1],
-                               self.words_pad_viewport_coords[2], self.words_pad_viewport_coords[3])
+            pad_content_height = lines_written
+            max_scroll = max(0, pad_content_height - self.list_display_height) 
+            self.words_scroll_offset = max(0, min(self.words_scroll_offset, max_scroll))
+            
+            self.words_pad.refresh(self.words_scroll_offset, 0,
+                                   self.words_pad_viewport_coords[0], self.words_pad_viewport_coords[1],
+                                   self.words_pad_viewport_coords[2], self.words_pad_viewport_coords[3])
+        except curses.error as e:
+            logger.error(f"Error updating words_pad: {e}")
+
 
     def add_list(self, win, current, all):
+        if not win: return # Safety check if window doesn't exist
         if not isinstance(all, dict):
             all_dict = dict(zip(all,all))
         else:
@@ -441,101 +542,109 @@ class UserInterface:
         win.addstr("\n")
 
     def create_input(self):
-        input_y_start = self.scr_height - self.input_window_height
-        self.windows["input"] = curses.newwin(self.input_window_height, self.scr_width, input_y_start, 0)
+        input_y_start = self.scr_height - UserInterface.INPUT_H
+        self.windows["input"] = curses.newwin(UserInterface.INPUT_H, self.scr_width, input_y_start, 0)
 
     def update_input(self, func):
         pwin = self.get_window("input")
+        if not pwin: return
         options = ["[c]orrect","[i]nclude","[e]xclude","[s]ize","[t]ab","[n]ext","so[r]t","[q]uit"]
         pwin.clear()
         self.add_list(pwin, func, dict(zip(self.funcs,options)))
-        pwin.refresh()
+        pwin.noutrefresh()
 
     def create_tabs(self):
-        # Tabs window y position is after greeting
-        self.windows["tabs"] = curses.newwin(self.tabs_window_height, self.scr_width, self.greeting_window_height, 0)
+        # Tabs window y position is after greeting (GREETING_H)
+        self.windows["tabs"] = curses.newwin(UserInterface.TABS_H, self.scr_width, UserInterface.GREETING_H, 0)
 
     def update_tabs(self, current, all_tabs):
         pwin = self.get_window("tabs")
+        if not pwin: return
         pwin.clear()
         pwin.addstr("TABS: ")
         self.add_list(pwin, current, all_tabs)
-        pwin.refresh()
+        pwin.noutrefresh()
 
-    def clear(self):
+    def clear_screen(self): # Renamed from 'clear' to be more specific
         self.screen.clear()
         self.screen.refresh()
 
-    def update_main(self,currnet_tab, all_tabs, hint, stats, bestwords): # idx_next removed
-        if self.terminal_too_small:
-            # Clear screen before attempting to write error message
-            self.screen.clear()
-            msg = "Terminal too small. Please resize."
-            # Check if screen is large enough for the message itself
-            if self.scr_height > 0 and self.scr_width > len(msg):
-                self.screen.addstr(self.scr_height // 2, (self.scr_width - len(msg)) // 2, msg)
-            else:
-                # If not, try a very minimal message at 0,0 if possible
-                try:
-                    self.screen.addstr(0,0, "Too small")
-                except curses.error:
-                    pass # Can't do anything if screen is impossibly small
-            self.screen.refresh()
-            return
-
-        # Before drawing main UI, ensure screen is clear, especially if resizing from too_small state
-        self.screen.clear() 
+    def update_main_ui(self,currnet_tab, all_tabs, hint, stats, bestwords):
+        # This method assumes that handle_resize has confirmed the screen is usable
+        # and list_area_is_too_small is False.
+        # The main loop should check should_draw_main_ui before calling this.
+        
+        self.screen.clear() # Clear before full redraw
 
         self.update_greeting()
         self.update_tabs(currnet_tab, all_tabs)
         self.update_status(hint)
         self.update_letters(stats)
-        self.update_words(bestwords) # idx_next removed
-        # Input line is updated in the main loop based on active_command
+        self.update_words(bestwords)
+        # self.update_input() will be called from main loop's needs_redraw block
+        # No self.screen.refresh() or curses.doupdate() here.
+        # Pad refreshes (letters_pad.refresh, words_pad.refresh) are done within their update methods.
 
-    def update_loading(self, current, total):
-        # Check for terminal size even during loading, as greeting is shown
-        if self.terminal_too_small:
-            self.screen.clear()
-            msg = "Terminal too small for loading screen."
-            # Try to display message, might fail if terminal is extremely small
-            try:
-                if self.scr_height > 0 and self.scr_width > len(msg):
-                    self.screen.addstr(self.scr_height // 2, (self.scr_width - len(msg)) // 2, msg)
-                else:
-                    self.screen.addstr(0,0,"Too small")
-            except curses.error:
-                pass # Can't do much if it's this small
-            self.screen.refresh()
-            # Potentially wait and exit or raise specific error here if loading can't proceed
-            return
 
-        self.screen.clear() # Clear before drawing loading screen
-        self.update_greeting()
-        self.update_progress(current, total)
+    def update_loading_screen(self, current, total):
+        # This method can be called even if the terminal is generally too small,
+        # as it uses minimal layout.
+        # However, handle_resize might have already displayed a "too small" message.
+        # For simplicity, we'll let it try to draw.
+        
+        # A more robust approach might involve check_terminal_size_and_display_message
+        # at the start of this method too, or ensuring handle_resize is called first.
+
+        self.screen.clear()
+        self.update_greeting() # Greeting is simple and usually fits
+        self.update_progress(current, total) # Progress also simple
+        self.screen.refresh()
+
 
     def get_args(self):
-        pwin = self.get_window("input")
-        curses.echo() # Enable echo for getstr
-        args = pwin.getstr().decode().lower()
-        curses.noecho() # Disable echo after getstr
-        pwin.clear()
-        pwin.refresh()
+        input_win = self.get_window("input")
+        if not input_win: return "" # Or raise error
+        
+        curses.echo() 
+        args = input_win.getstr().decode().lower()
+        curses.noecho() 
+        
+        input_win.clear() 
+        input_win.noutrefresh() # Changed from refresh to noutrefresh
         return args
 
 def main():
     ui = UserInterface()
-    curses.noecho() # Set noecho globally for the application
+    curses.noecho() 
+
+    # Initial resize handling and setup
+    should_draw_main_ui = ui.handle_resize()
+    needs_redraw = True # Flag to trigger redraw, useful after certain operations
 
     num_lines = sum(1 for _ in open(sys.argv[1]))
     worddict = WordDict()
-    with open(sys.argv[1], "r") as file:
-        # Read each line in the file
-        for idx, line in enumerate(file):
-            ui.update_loading(idx+1, num_lines)
-            word = line.strip()
-            worddict.push(word)
-    ui.clear()
+    # Only show loading if initial setup allows (not "Terminal too small")
+    if should_draw_main_ui: # A basic check, could be more nuanced
+        with open(sys.argv[1], "r") as file:
+            for idx, line in enumerate(file):
+                # Check if still okay to draw, in case of resize during loading
+                if ui.scr_height < UserInterface.MIN_TERMINAL_HEIGHT or \
+                   ui.scr_width < UserInterface.MIN_TERMINAL_WIDTH:
+                    ui.check_terminal_size_and_display_message("Terminal too small during loading.")
+                    # Potentially break or exit if loading cannot be shown
+                    break 
+                ui.update_loading_screen(idx+1, num_lines)
+                word = line.strip()
+                worddict.push(word)
+    else: # Terminal was too small on startup
+        # Load data silently or exit, as UI cannot display loading.
+        # For now, just load silently if it was only the list area that was too small initially.
+        # If MIN_TERMINAL_HEIGHT/WIDTH failed, then getch loop won't run meaningfully.
+        logger.info("Terminal too small for loading screen, loading data silently.")
+        for line in open(sys.argv[1]): worddict.push(line.strip())
+
+    if should_draw_main_ui: ui.clear_screen()
+
 
     freq = [ a.split() for a in open(sys.argv[2]) ]
     freq = {a[0] : float(a[1]) for a in freq}
@@ -544,174 +653,118 @@ def main():
     current_tab = "0"
     result = None
     stats = None
-    # idx_next is now replaced by ui.words_scroll_offset for display
     sorting_strategy = 2
-    
     active_command = None
-
-    # Variables for resize debouncing
-    RESIZE_DEBOUNCE_DELAY = 0.25  # 250 milliseconds
-    last_resize_time = 0.0        # Initialize to 0.0 to ensure first resize is processed
+    RESIZE_DEBOUNCE_DELAY = 0.25
+    last_resize_time = 0.0
 
     while True:
-        current_hint = tabs[current_tab]
-        # Potentially, apply_filter and calc_stats could be skipped if no relevant data changed
-        result = worddict.apply_filter(current_hint)
-        stats, bestwords = calc_stats(result, freq, sorting_strategy)
-        
-        # Pass ui.words_scroll_offset instead of idx_next -> now no scroll offset passed
-        ui.update_main(current_tab, tabs.keys(), current_hint, stats, bestwords)
-        ui.update_input(active_command) # Show current active command or None
+        if should_draw_main_ui:
+            if needs_redraw: # Only redraw if necessary
+                current_hint = tabs[current_tab]
+                result = worddict.apply_filter(current_hint)
+                stats, bestwords = calc_stats(result, freq, sorting_strategy)
+                
+                ui.update_main_ui(current_tab, tabs.keys(), current_hint, stats, bestwords)
+                # update_input is also part of the main UI update sequence
+                ui.update_input(active_command) 
+                
+                curses.doupdate() # Single call to update physical screen for all noutrefreshes
+                needs_redraw = False # Reset flag after redraw
+            
+        else:
+            # If UI shouldn't be drawn (e.g. terminal too small), handle_resize has already
+            # cleared and displayed a message and called screen.refresh().
+            # No further screen operations needed here until should_draw_main_ui is true.
+            # We might need to call handle_resize here if a resize could make it drawable again.
+            # For now, a simple clear might be okay, or rely on getch timeout for resize event.
+            pass
 
-        # Make getch non-blocking; timeout can be adjusted or set once outside loop if preferred
-        # For responsive UI update on resize, or other external events, timeout is good in loop.
+
         ui.screen.timeout(100) 
         key = ui.screen.getch()
 
-        if key == curses.KEY_LEFT or key == curses.KEY_RIGHT:
-            if ui.active_list == "words":
-                ui.active_list = "letters"
-            else:
-                ui.active_list = "words"
+        # Always allow quit and resize, even if main UI is not drawn
+        if key != -1 and key < 256 and chr(key) == 'q':
+             break
+        elif key == curses.KEY_RESIZE:
+            current_time = time.time()
+            if (current_time - last_resize_time) < RESIZE_DEBOUNCE_DELAY:
+                continue
+            last_resize_time = current_time
+            
+            should_draw_main_ui = ui.handle_resize()
+            needs_redraw = True # Force redraw after resize
             active_command = None # Clear any pending command
+            continue # Restart loop to check should_draw_main_ui
+
+        if not should_draw_main_ui:
+            # If not drawable, skip other input processing until resize makes it drawable
+            if key != -1 : logger.info(f"Terminal too small, input {key} ignored.")
+            continue
+
+        # Process other inputs only if UI is drawable
+        if key == curses.KEY_LEFT or key == curses.KEY_RIGHT:
+            if ui.active_list == "words": ui.active_list = "letters"
+            else: ui.active_list = "words"
+            active_command = None
+            needs_redraw = True
         elif key == curses.KEY_UP:
-            if ui.active_list == "letters":
-                ui.letters_scroll_offset = max(0, ui.letters_scroll_offset - 1)
-            elif ui.active_list == "words":
-                ui.words_scroll_offset = max(0, ui.words_scroll_offset - 1)
+            if ui.active_list == "letters": ui.letters_scroll_offset = max(0, ui.letters_scroll_offset - 1)
+            elif ui.active_list == "words": ui.words_scroll_offset = max(0, ui.words_scroll_offset - 1)
             active_command = None
+            needs_redraw = True
         elif key == curses.KEY_DOWN:
-            if ui.active_list == "letters":
-                # Max limit is handled by update_letters before refresh
-                ui.letters_scroll_offset += 1 
-            elif ui.active_list == "words":
-                # Max limit is handled by update_words before refresh
-                ui.words_scroll_offset += 1 
+            if ui.active_list == "letters": ui.letters_scroll_offset += 1 
+            elif ui.active_list == "words": ui.words_scroll_offset += 1 
             active_command = None
-        elif key != -1 and key < 256 and chr(key) in ui.funcs: # Check key < 256 for printable chars
+            needs_redraw = True
+        elif key != -1 and key < 256 and chr(key) in ui.funcs:
             func_char = chr(key).lower()
-            active_command = func_char # Store the command character
-
-            if func_char == 'q':
-                break
-
-            ui.update_input(active_command) # Update UI to show current command
-            args = ui.get_args()
+            active_command = func_char
+            
+            # Update input to show the command character immediately
+            ui.update_input(active_command)
+            args = ui.get_args() # This call now includes its own clear and refresh for input line
             active_command = None # Clear active command after getting args
-            # ui.update_input(None) # Already handled by next loop's update_input(active_command)
+            needs_redraw = True # Assume command changes data
 
             try:
+                current_hint = tabs[current_tab] # Ensure current_hint is up-to-date
                 if func_char == "s":
                     size = int(args)
                     tabs[current_tab] = HintConfig(size)
-                    # Reset scrolls and active list for new size
-                    ui.words_scroll_offset = 0
-                    ui.letters_scroll_offset = 0
-                    ui.active_list = "words" 
+                    ui.words_scroll_offset = 0; ui.letters_scroll_offset = 0; ui.active_list = "words" 
                 elif func_char == "c":
-                    if "#" in args:
-                        current_hint.clear_corrects()
-                    else:
-                        for k_arg, v_arg in split_args(current_hint.size, args).items():
-                            current_hint.correct(k_arg, v_arg)
+                    if "#" in args: current_hint.clear_corrects()
+                    else: 
+                        for k_arg, v_arg in split_args(current_hint.size, args).items(): current_hint.correct(k_arg, v_arg)
                 elif func_char == "i":
-                    if "#" in args:
-                        logger.info(args)
-                        current_hint.clear_includes()
+                    if "#" in args: current_hint.clear_includes()
                     else:
-                        for k_arg, v_arg in split_args(current_hint.size, args).items():
-                            current_hint.include(k_arg, v_arg)
+                        for k_arg, v_arg in split_args(current_hint.size, args).items(): current_hint.include(k_arg, v_arg)
                 elif func_char == "e":
                     args = args.replace(" ", "")
-                    if "#" in args:
-                        current_hint.clear_excludes()
-                    else:
-                        for l_arg in set(args):
-                            current_hint.exclude(l_arg)
-                elif func_char == "n": # Go to word number (1-indexed)
+                    if "#" in args: current_hint.clear_excludes()
+                    else: 
+                        for l_arg in set(args): current_hint.exclude(l_arg)
+                elif func_char == "n": 
                     if args != "":
-                        try:
-                            target_item_number = int(args)
-                            # Convert 1-indexed user input to 0-indexed scroll offset
-                            ui.words_scroll_offset = max(0, target_item_number - 1) 
-                        except ValueError:
-                            logger.warn(f"Invalid argument for 'n' command (expected a number): {args}")
-                            pass # Or display an error to the user
-                    else:
-                        ui.words_scroll_offset = 0 # Go to top (item 1)
-                elif func_char == "r": # Sort strategy
-                    if args in ["0","1","2"]:
-                        sorting_strategy = int(args)          
-                elif func_char == "t": # Tab management
-                    if args in tabs:
-                        current_tab = args
-                    else:
-                        tabs.update({args: copy.copy(current_hint)})
-                        current_tab = args
+                        try: ui.words_scroll_offset = max(0, int(args) - 1) 
+                        except ValueError: logger.warn(f"Invalid arg for 'n': {args}")
+                    else: ui.words_scroll_offset = 0 
+                elif func_char == "r": 
+                    if args in ["0","1","2"]: sorting_strategy = int(args)          
+                elif func_char == "t": 
+                    if args in tabs: current_tab = args
+                    else: tabs.update({args: copy.copy(current_hint)}); current_tab = args
             except Exception as e:
-                logger.error(f"Error processing command {func_char} with args {args}: {e} {traceback.format_exc()}")
-                # Optionally, display an error message in the UI status bar
-                pass # Continue running
-        elif key != -1 and key < 256 and chr(key) == 'q': # Explicitly check for 'q' if not in ui.funcs
-             break
-        elif key == curses.KEY_RESIZE: # Handle terminal resize
-            current_time = time.time()
-            if (current_time - last_resize_time) < RESIZE_DEBOUNCE_DELAY:
-                # Debounce: Skip handling this resize event if it's too soon after the last one
-                continue
-            last_resize_time = current_time
-
-            ui.scr_height, ui.scr_width = ui.screen.getmaxyx()
-            ui.list_display_area_start_y = (
-                ui.greeting_window_height + ui.tabs_window_height + ui.status_window_height
-            )
-            ui.list_display_height = (
-                ui.scr_height - ui.list_display_area_start_y - ui.input_window_height
-            )
-            ui.terminal_too_small = ui.list_display_height < 3
-
-            # Update pad viewport coordinates and potentially recreate/resize windows
-            if not ui.terminal_too_small:
-                # Update fixed window dimensions by recreating them
-                # Their create methods use self.scr_width and self.scr_height implicitly or via calculated positions
-                ui.create_greeting() 
-                ui.create_tabs()
-                ui.create_status()
-                ui.create_input()
-
-                # Update letters pad viewport (width is fixed)
-                ui.letters_pad_viewport_coords = (
-                    ui.list_display_area_start_y, 0, # sminrow, smincol
-                    ui.list_display_area_start_y + ui.list_display_height - 1, ui.letters_pad_width -1 # smaxrow, smaxcol
-                )
-
-                # Update words pad width and resize it, then update viewport
-                ui.words_pad_width = max(1, ui.scr_width - 20)
-                try:
-                    current_words_pad_rows, _ = ui.words_pad.getmaxyx()
-                    ui.words_pad.resize(current_words_pad_rows, ui.words_pad_width)
-                except curses.error as e:
-                    logger.error(f"Error resizing words_pad: {e}")
-                    # Fallback: recreate if resize fails (e.g. new width too small for content)
-                    # This might lose content if not handled carefully, but pads are repopulated anyway
-                    ui.words_pad = curses.newpad(ui.initial_pad_height, ui.words_pad_width)
-
-
-                ui.words_pad_viewport_coords = (
-                    ui.list_display_area_start_y, 20, # sminrow, smincol
-                    ui.list_display_area_start_y + ui.list_display_height - 1, ui.scr_width -1 # smaxcol for viewport
-                )
-            
-            # Scroll offsets will be clamped by update_letters/update_words in the next full refresh
-            # which is triggered by the loop continuing.
-
-            ui.screen.clear() # Clear physical screen fully to prevent artifacts
-            # Loop will redraw everything in the next iteration.
-            active_command = None
-
-
+                logger.error(f"Cmd error {func_char} with {args}: {e} {traceback.format_exc()}")
         elif key == -1: # Timeout
-            pass # Just continue, UI will be updated
+            pass # No input, just continue (allows loop to check needs_redraw if set by something else)
+        else: # Other unhandled key
+            logger.info(f"Unhandled key: {key}")
+
 
 def signal_handler(sig, frame):
     curses.endwin()
