@@ -573,6 +573,8 @@ class UserInterface:
 
 def main():
     ui = UserInterface()
+    last_resize_handle_time = 0
+    RESIZE_DEBOUNCE_DELAY = 0.25 # 250 milliseconds
 
     # Initial terminal size check
     is_size_ok = ui.check_terminal_size_and_display_message()
@@ -580,11 +582,16 @@ def main():
     while not is_size_ok:
         key = ui.screen.getch() # Wait for input/event
         if key == curses.KEY_RESIZE:
+            current_time = time.time()
+            if current_time - last_resize_handle_time < RESIZE_DEBOUNCE_DELAY:
+                continue # Skip this resize event
+            last_resize_handle_time = current_time
             # handle_resize should update screen dimensions and recreate windows.
             # The subsequent call to check_terminal_size_and_display_message
             # will then use these new dimensions.
-            ui.handle_resize() 
-            is_size_ok = ui.check_terminal_size_and_display_message()
+            # Note: handle_resize now calls check_terminal_size_and_display_message itself.
+            is_size_ok = ui.handle_resize() 
+            # is_size_ok = ui.check_terminal_size_and_display_message() # This call is now redundant
         # TODO: Optionally add other key handling here (e.g., quit key)
 
     # Proceed with application setup only if size is okay
@@ -607,7 +614,24 @@ def main():
     stats = None
     idx_next = 0
     sorting_strategy = 2
+    
+    should_draw_main_ui = True # Initially true as startup check passed
+
     while True:
+        if not should_draw_main_ui:
+            # Screen is too small, wait for resize or quit
+            key = ui.screen.getch()
+            if key == curses.KEY_RESIZE:
+                current_time = time.time()
+                if current_time - last_resize_handle_time < RESIZE_DEBOUNCE_DELAY:
+                    continue
+                last_resize_handle_time = current_time
+                should_draw_main_ui = ui.handle_resize()
+            elif key == ord('q'):
+                break
+            continue
+
+        # If should_draw_main_ui is True:
         current_hint = tabs[current_tab]
         result = worddict.apply_filter(current_hint)
         stats, bestwords = calc_stats(result, freq, sorting_strategy)
@@ -619,7 +643,11 @@ def main():
         func_or_key_pressed = ui.get_func()
 
         if func_or_key_pressed == curses.KEY_RESIZE:
-            ui.handle_resize()  # Call handle_resize if KEY_RESIZE was returned
+            current_time = time.time()
+            if current_time - last_resize_handle_time < RESIZE_DEBOUNCE_DELAY:
+                continue
+            last_resize_handle_time = current_time
+            should_draw_main_ui = ui.handle_resize()  # Call handle_resize if KEY_RESIZE was returned
         else:
             # If it wasn't KEY_RESIZE, it must be a normal function character
             func = func_or_key_pressed  # Assign to func to keep existing logic flow
