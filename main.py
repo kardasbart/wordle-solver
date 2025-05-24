@@ -549,6 +549,10 @@ def main():
     
     active_command = None
 
+    # Variables for resize debouncing
+    RESIZE_DEBOUNCE_DELAY = 0.25  # 250 milliseconds
+    last_resize_time = 0.0        # Initialize to 0.0 to ensure first resize is processed
+
     while True:
         current_hint = tabs[current_tab]
         # Potentially, apply_filter and calc_stats could be skipped if no relevant data changed
@@ -651,6 +655,12 @@ def main():
         elif key != -1 and key < 256 and chr(key) == 'q': # Explicitly check for 'q' if not in ui.funcs
              break
         elif key == curses.KEY_RESIZE: # Handle terminal resize
+            current_time = time.time()
+            if (current_time - last_resize_time) < RESIZE_DEBOUNCE_DELAY:
+                # Debounce: Skip handling this resize event if it's too soon after the last one
+                continue
+            last_resize_time = current_time
+
             ui.scr_height, ui.scr_width = ui.screen.getmaxyx()
             ui.list_display_area_start_y = (
                 ui.greeting_window_height + ui.tabs_window_height + ui.status_window_height
