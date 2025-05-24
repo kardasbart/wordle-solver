@@ -322,10 +322,14 @@ class UserInterface:
                 win.addstr(value)
             if idx != len(all_dict)-1:
                 win.addstr(" | ")
-        win.addstr("\n")
+        
+        y, x = win.getyx()
+        h, w = win.getmaxyx()
+        if y < h - 1: # Only add newline if not already on the last line
+            win.addstr("\n")
 
     def create_input(self):
-        self.windows["input"] = curses.newwin(2,self.scr_width, 50, 0)
+        self.windows["input"] = curses.newwin(3,self.scr_width, 50, 0)
 
     def update_input(self, func):
         pwin = self.get_window("input")
