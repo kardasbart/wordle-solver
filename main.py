@@ -359,15 +359,47 @@ class UserInterface:
         self.update_greeting()
         self.update_progress(current, total)
 
+    def handle_resize(self):
+        """Handles terminal resize events."""
+        self.scr_height, self.scr_width = self.screen.getmaxyx()
+        
+        self.screen.clear()
+        self.screen.refresh()
+        
+        # Re-create all windows to fit new dimensions.
+        # The create_* methods use self.scr_width and self.scr_height.
+        self.create_greeting()
+        self.create_progress() # Recreate even if not always visible during main loop.
+        self.create_status()
+        self.create_letters()
+        self.create_words()
+        self.create_input()
+        self.create_tabs()
+        
+        # The main loop's existing calls to ui.update_main() and ui.update_input()
+        # will redraw the content in these newly resized windows.
+
     def get_func(self):
         pwin = self.get_window("input")
         curses.noecho()
         while True:
-            func = chr(pwin.getch()).lower()
-            if func in self.funcs:
-                break
-        curses.echo()
-        return func
+            key_press = pwin.getch()  # Get the raw key press
+            
+            if key_press == curses.KEY_RESIZE:
+                # No need to call curses.echo() here as it's not a character input
+                return curses.KEY_RESIZE  # Return KEY_RESIZE directly
+            
+            # If not KEY_RESIZE, try to convert to char and process
+            try:
+                func = chr(key_press).lower()
+                if func in self.funcs:
+                    curses.echo()  # Call echo before returning the valid function character
+                    return func
+            except ValueError:
+                # If chr(key_press) fails (e.g. for other special keys like F1, arrows),
+                # just ignore and loop again to wait for a valid input.
+                pass
+            # If it was a character but not in self.funcs, the loop also continues.
 
     def get_args(self):
         pwin = self.get_window("input")
@@ -405,13 +437,22 @@ def main():
         ui.update_main(current_tab, tabs.keys(), current_hint, stats, bestwords, idx_next)
 
         ui.update_input(None)
-        func = ui.get_func()
-        ui.update_input(func)
-        if func == "q":
-            break
-        args = ui.get_args()
-        try:
-            if func == "s":
+        
+        # Get the function or special key (like KEY_RESIZE) from get_func
+        func_or_key_pressed = ui.get_func()
+
+        if func_or_key_pressed == curses.KEY_RESIZE:
+            ui.handle_resize()  # Call handle_resize if KEY_RESIZE was returned
+        else:
+            # If it wasn't KEY_RESIZE, it must be a normal function character
+            func = func_or_key_pressed  # Assign to func to keep existing logic flow
+            
+            ui.update_input(func) # Show the selected function
+            if func == "q":
+                break
+            args = ui.get_args() # Get arguments for the function
+            try:
+                if func == "s":
                 size = int(args)
                 tabs[current_tab] = HintConfig(size)
             elif func == "c":
