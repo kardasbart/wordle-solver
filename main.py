@@ -282,15 +282,60 @@ class UserInterface:
         pwin.refresh()
 
     def create_letters(self):
-        self.windows["letters"] = curses.newwin(40,15, 10,0)
+        # The window starts at y-offset 10.
+        # Ensure there's at least 1 line for the window itself.
+        available_height = max(1, self.scr_height - 10) 
+        
+        # Use min of original fixed height (40), available_height,
+        # and ensure at least 1 line high.
+        window_height = max(1, min(40, available_height))
+        
+        self.windows["letters"] = curses.newwin(window_height, 15, 10, 0)
 
     def update_letters(self, stats):
         pwin = self.get_window("letters")
         pwin.clear()
         if stats is not None:
-            pwin.addstr("Letters %:\n")
-            for k, v in stats:
-                pwin.addstr(f"{k}: {v:.4f}%\n")
+            h, w = pwin.getmaxyx()
+
+            if h == 0: # Should not happen due to create_letters using max(1, ...)
+                pwin.refresh()
+                return
+
+            available_lines_for_items = 0
+            # 1. Handle header printing with conditional newline
+            if h == 1:
+                pwin.addstr("Letters %:")
+                # No lines available for items if header takes the only line
+                available_lines_for_items = 0 
+            else: # h > 1
+                pwin.addstr("Letters %:\n")
+                # Lines available after header (which includes a newline)
+                available_lines_for_items = h - 1
+
+            # Ensure available_lines_for_items is not negative (already handled by h checks)
+            # available_lines_for_items = max(0, available_lines_for_items) # Redundant if h>=1
+            
+            displayed_stats = stats[:available_lines_for_items]
+            
+            # 2. Handle items printing with conditional newline
+            # If h=1, available_lines_for_items is 0, so this loop won't run.
+            # If h>1, header is on line 0, items start on line 1.
+            for idx, (k, v) in enumerate(displayed_stats):
+                item_str = f"{k}: {v:.4f}%"
+                
+                # current_item_line_idx is the 0-indexed line where this item will be printed.
+                # If h > 1, header was on line 0, items start on line 1.
+                # So, the first item (idx=0) goes to line 1.
+                current_item_line_idx = 1 + idx 
+
+                # Add newline if this item is NOT on the last line of the window (h-1)
+                if current_item_line_idx < h - 1:
+                    item_str += "\n"
+                # else: item is on the last line (h-1), or something is wrong if > h-1
+                
+                pwin.addstr(item_str)
+
         pwin.refresh()
 
     def create_words(self):
