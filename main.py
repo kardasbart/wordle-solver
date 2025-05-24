@@ -457,8 +457,8 @@ def main():
             args = ui.get_args() # Get arguments for the function
             try:
                 if func == "s":
-                size = int(args)
-                tabs[current_tab] = HintConfig(size)
+                    size = int(args)
+                    tabs[current_tab] = HintConfig(size)
             elif func == "c":
                 if "#" in args:
                     current_hint.clear_corrects()
