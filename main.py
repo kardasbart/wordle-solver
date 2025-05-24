@@ -539,7 +539,16 @@ class UserInterface:
                 win.addstr(value)
             if idx != len(all_dict)-1:
                 win.addstr(" | ")
-        win.addstr("\n")
+        
+        # Robust newline addition
+        current_y, _ = win.getyx()
+        max_h, _ = win.getmaxyx() # Get current window height
+        if current_y < max_h - 1: # If cursor is not on the last line
+            try:
+                win.addstr("\n")
+            except curses.error:
+                logger.error(f"Failed to add newline in add_list. y={current_y}, h={max_h}")
+                pass
 
     def create_input(self):
         input_y_start = self.scr_height - UserInterface.INPUT_H
