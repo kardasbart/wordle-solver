@@ -576,25 +576,6 @@ def main():
     last_resize_handle_time = 0
     RESIZE_DEBOUNCE_DELAY = 0.25 # 250 milliseconds
 
-    # Initial terminal size check
-    is_size_ok = ui.check_terminal_size_and_display_message()
-
-    while not is_size_ok:
-        key = ui.screen.getch() # Wait for input/event
-        if key == curses.KEY_RESIZE:
-            current_time = time.time()
-            if current_time - last_resize_handle_time < RESIZE_DEBOUNCE_DELAY:
-                continue # Skip this resize event
-            last_resize_handle_time = current_time
-            # handle_resize should update screen dimensions and recreate windows.
-            # The subsequent call to check_terminal_size_and_display_message
-            # will then use these new dimensions.
-            # Note: handle_resize now calls check_terminal_size_and_display_message itself.
-            is_size_ok = ui.handle_resize() 
-            # is_size_ok = ui.check_terminal_size_and_display_message() # This call is now redundant
-        # TODO: Optionally add other key handling here (e.g., quit key)
-
-    # Proceed with application setup only if size is okay
     num_lines = sum(1 for _ in open(sys.argv[1]))
     worddict = WordDict()
     with open(sys.argv[1], "r") as file:
