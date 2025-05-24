@@ -232,12 +232,56 @@ def word_places(iterable):
     
 
 class UserInterface:
+    MIN_TERMINAL_HEIGHT = 53
+    MIN_TERMINAL_WIDTH = 62
+
     def __init__(self):
         self.screen = curses.initscr()
         curses.curs_set(0)
         self.scr_height, self.scr_width = self.screen.getmaxyx()
         self.windows = dict()
         self.funcs = "ciestnrq"
+
+    def check_terminal_size_and_display_message(self):
+        h, w = self.screen.getmaxyx()
+        if h < UserInterface.MIN_TERMINAL_HEIGHT or w < UserInterface.MIN_TERMINAL_WIDTH:
+            self.screen.clear()
+            msg = "Sorry this is too small window, please resize!"
+            
+            # Truncate message if width is too small
+            # w-1 to leave space for cursor/border if window is exactly len(msg) wide
+            safe_msg = msg[:max(0, w -1)] # Ensure slice index is not negative
+            
+            # Attempt to center the message
+            msg_y = h // 2
+            msg_x = (w - len(safe_msg)) // 2
+            
+            # Ensure coordinates are valid (non-negative and within screen bounds)
+            if msg_y >= h: # If h=0, msg_y will be 0. If h=1, msg_y will be 0.
+                msg_y = 0
+            if msg_x < 0: # If safe_msg is empty (w=0 or 1), msg_x could be 0 or negative.
+                msg_x = 0
+            # Also ensure msg_x + len(safe_msg) does not exceed width
+            if msg_x + len(safe_msg) > w:
+                msg_x = 0 # Fallback to (0,0) if centering makes it go out of bounds
+
+            try:
+                # Ensure addstr itself doesn't try to write out of bounds if h or w is 0
+                if h > 0 and w > 0 :
+                    self.screen.addstr(msg_y, msg_x, safe_msg)
+            except curses.error:
+                # Fallback for very small screens or other addstr errors
+                try:
+                    self.screen.clear() # Clear again
+                    # Ensure "Resize!" fits, even if w is very small
+                    fallback_msg = "Resize!"[:max(0, w - 1)]
+                    if h > 0 and w > 0 and len(fallback_msg) > 0:
+                         self.screen.addstr(0, 0, fallback_msg)
+                except curses.error:
+                    pass # Give up if screen is truly unusable
+            self.screen.refresh()
+            return False
+        return True
 
     def get_window(self, name):
         if name not in self.windows:
@@ -339,18 +383,69 @@ class UserInterface:
         pwin.refresh()
 
     def create_words(self):
-        self.windows["words"] = curses.newwin(40,self.scr_width, 10, 20)
+        # y-offset is 10
+        available_height = max(1, self.scr_height - 10) 
+        words_window_height = max(1, min(40, available_height))
+
+        # x-offset is 20
+        # Ensure width is at least 1, and uses screen width minus offset
+        words_window_width = max(1, self.scr_width - 20) 
+        
+        self.windows["words"] = curses.newwin(words_window_height, words_window_width, 10, 20)
 
     def update_words(self, bestwords, idx_next):
         pwin = self.get_window("words")
         pwin.clear()
         if bestwords is not None:
-            height, _ = pwin.getmaxyx()
-            height -= 5
-            pwin.addstr(f"Best of {len(bestwords)} words: {'score':>10} {'freq':>9}\n")
-            maxw = len(bestwords)
-            for k, w in enumerate(bestwords[min(idx_next, maxw) : min(idx_next + height-1, maxw)]):
-                pwin.addstr(f'{k+1+idx_next:2}: {w[0]:20} {w[1]: 6.2f} {w[2]: .2E}\n')
+            h, w = pwin.getmaxyx()
+
+            if h == 0: # Window unusable
+                pwin.refresh()
+                return
+
+            header_str = f"Best of {len(bestwords)} words: {'score':>10} {'freq':>9}"
+            available_lines_for_items = 0
+            
+            # Max number of characters to print per line (for addnstr)
+            # Ensures that we don't try to write past the window width.
+            # -1 because addnstr writes *at most* n characters. If w=0, n_to_print=0.
+            n_to_print = max(0, w - 1) 
+
+            if h == 1:
+                pwin.addnstr(header_str, n_to_print)
+            else: # h > 1
+                # addnstr will include the \n if it fits within n_to_print characters.
+                # If header_str itself is already w-1, \n won't be printed.
+                pwin.addnstr(header_str + "\n", n_to_print)
+                available_lines_for_items = h - 1
+            
+            available_lines_for_items = max(0, available_lines_for_items)
+            
+            start_idx = idx_next
+            if start_idx < 0: start_idx = 0
+            start_idx = min(start_idx, len(bestwords)) # Ensure start_idx is not out of bounds
+
+            end_idx = min(start_idx + available_lines_for_items, len(bestwords))
+            displayed_words = bestwords[start_idx:end_idx]
+            
+            for k_loop, word_data in enumerate(displayed_words):
+                item_str = f'{start_idx + k_loop + 1:2}: {word_data[0]:20} {word_data[1]:6.2f} {word_data[2]:.2E}'
+                
+                # current_item_line_idx is the 0-indexed line this item will occupy,
+                # assuming header (if h>1) was on line 0.
+                current_item_line_idx = 1 + k_loop 
+
+                final_item_str_with_nl = item_str # Assume no newline first
+                if current_item_line_idx < h - 1: # If not the very last line of the window
+                    final_item_str_with_nl += "\n"
+                
+                try:
+                    # Add the string, truncated by n_to_print.
+                    # If \n is part of the truncated string, it will be processed.
+                    pwin.addnstr(final_item_str_with_nl, n_to_print)
+                except curses.error:
+                    logger.error(f"Error in update_words: addnstr failed for item (h:{h},w:{w},n:{n_to_print}). Item: {item_str}")
+                    break 
         pwin.refresh()
 
     def add_list(self, win, current, all):
@@ -410,23 +505,42 @@ class UserInterface:
 
     def handle_resize(self):
         """Handles terminal resize events."""
-        self.scr_height, self.scr_width = self.screen.getmaxyx()
+        h, w = self.screen.getmaxyx() # Get new size first
         
+        try:
+            curses.resizeterm(h, w)      # Inform curses
+        except Exception as e: # pragma: no cover
+            logger.error(f"curses.resizeterm({h}, {w}) failed: {e}")
+            # Even if resizeterm fails, we should update our internal dimensions
+            # and attempt to redraw.
+        
+        self.scr_height, self.scr_width = h, w # Update instance variables
+
         self.screen.clear()
-        self.screen.refresh()
+        # Crucial: Refresh after clear so check_terminal_size_and_display_message 
+        # sees a clean slate for its getmaxyx if it calls it internally,
+        # or so its message is on a clean screen.
+        self.screen.refresh() 
+
+        is_size_ok = self.check_terminal_size_and_display_message()
+
+        if is_size_ok:
+            # If size is okay, re-create all windows.
+            self.create_greeting()
+            self.create_progress() 
+            self.create_status()
+            self.create_letters()
+            self.create_words()
+            self.create_input()
+            self.create_tabs()
+            # Refresh the screen to show newly created windows.
+            # check_terminal_size_and_display_message refreshes if it returns False (size not ok).
+            # If it returned True (meaning size is OK), it doesn't refresh, so we do it here.
+            self.screen.refresh()
+        # If is_size_ok is False, check_terminal_size_and_display_message has already
+        # cleared, displayed a message, and refreshed the screen.
         
-        # Re-create all windows to fit new dimensions.
-        # The create_* methods use self.scr_width and self.scr_height.
-        self.create_greeting()
-        self.create_progress() # Recreate even if not always visible during main loop.
-        self.create_status()
-        self.create_letters()
-        self.create_words()
-        self.create_input()
-        self.create_tabs()
-        
-        # The main loop's existing calls to ui.update_main() and ui.update_input()
-        # will redraw the content in these newly resized windows.
+        return is_size_ok
 
     def get_func(self):
         pwin = self.get_window("input")
@@ -460,6 +574,20 @@ class UserInterface:
 def main():
     ui = UserInterface()
 
+    # Initial terminal size check
+    is_size_ok = ui.check_terminal_size_and_display_message()
+
+    while not is_size_ok:
+        key = ui.screen.getch() # Wait for input/event
+        if key == curses.KEY_RESIZE:
+            # handle_resize should update screen dimensions and recreate windows.
+            # The subsequent call to check_terminal_size_and_display_message
+            # will then use these new dimensions.
+            ui.handle_resize() 
+            is_size_ok = ui.check_terminal_size_and_display_message()
+        # TODO: Optionally add other key handling here (e.g., quit key)
+
+    # Proceed with application setup only if size is okay
     num_lines = sum(1 for _ in open(sys.argv[1]))
     worddict = WordDict()
     with open(sys.argv[1], "r") as file:
